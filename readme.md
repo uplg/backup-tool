@@ -126,6 +126,15 @@ Development (runs immediately):
 bun run dev
 ```
 
+Run only specific targets by name (comma-separated):
+
+```sh
+bun run dev -- --only nginx-config
+bun run dev -- --only nginx-config,dobrunia
+```
+
+When `--only` is used, the backup runs immediately (no cron), and remote/local cleanup is skipped.
+
 Production -- use a process manager like [pm2](https://pm2.keymetrics.io/):
 
 ```sh

@@ -1,4 +1,5 @@
 import { unlink } from "node:fs/promises";
+import { parseArgs } from "node:util";
 import { schedule } from "node-cron";
 
 import config from "./config";
@@ -13,13 +14,28 @@ if (config.settings.allowSelfSigned) {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 }
 
+const { values: args } = parseArgs({
+  args: process.argv.slice(2),
+  options: {
+    only: { type: "string" },
+  },
+  strict: false,
+});
+
+const onlyFilter: Set<string> | null =
+  typeof args.only === "string"
+    ? new Set(args.only.split(",").map((s) => s.trim()))
+    : null;
+
 const providers = config.providers.map((description) => {
   if (isFTP(description)) {
     return new FTPProvider(description);
   } else if (isSFTP(description)) {
     return new SFTPProvider(description);
   } else {
-    throw new Error(`Unknown provider type: ${(description as { type: string }).type}`);
+    throw new Error(
+      `Unknown provider type: ${(description as { type: string }).type}`,
+    );
   }
 });
 
@@ -34,22 +50,40 @@ async function sendToProviders(filePath: string, label: string): Promise<void> {
   await Promise.all(jobs);
 }
 
-async function backupJob(): Promise<void> {
+async function backupJob(filter: Set<string> | null): Promise<void> {
   const startTime = Date.now();
+  const isPartial = filter !== null;
 
-  // Each DB = dump + compress + send (1 step)
-  // Each file entry = archive + send (1 step)
-  // + remote cleanup (1 step)
-  // + local cleanup (1 step)
-  const totalSteps =
-    config.dbs.length + config.files.length + 1 /* remote cleanup */ + 1; /* local cleanup */
+  const dbs = filter
+    ? config.dbs.filter((db) => filter.has(db.name))
+    : config.dbs;
+  const files = filter
+    ? config.files.filter((f) => filter.has(f.name))
+    : config.files;
+
+  if (isPartial && dbs.length === 0 && files.length === 0) {
+    logger.error(`No backup targets matched --only "${[...filter].join(",")}"`);
+    const allNames = [
+      ...config.dbs.map((d) => d.name),
+      ...config.files.map((f) => f.name),
+    ];
+    logger.info(`Available targets: ${allNames.join(", ")}`);
+    return;
+  }
+
+  // Steps: each db + each file + cleanup phases (skipped when partial)
+  const totalSteps = dbs.length + files.length + (isPartial ? 0 : 2);
   const progress = new Progress(totalSteps);
 
-  logger.info("=== Backup job started ===");
+  if (isPartial) {
+    logger.info(`=== Partial backup: ${[...filter].join(", ")} ===`);
+  } else {
+    logger.info("=== Backup job started ===");
+  }
 
   try {
     // Phase 1: Database backups
-    for (const db of config.dbs) {
+    for (const db of dbs) {
       progress.step(`Database dump: ${db.name} (${db.type})`);
       try {
         const backupFilePath = await backupDatabase(db);
@@ -62,7 +96,7 @@ async function backupJob(): Promise<void> {
     }
 
     // Phase 2: File backups
-    for (const fileConfig of config.files) {
+    for (const fileConfig of files) {
       progress.step(`Archive files: ${fileConfig.name}`);
       try {
         const archivePath = await archiveFiles(fileConfig);
@@ -73,22 +107,25 @@ async function backupJob(): Promise<void> {
       }
     }
 
-    // Phase 3: Remote cleanup
-    progress.step("Remote cleanup: removing old backups from providers");
-    for (const provider of providers) {
-      try {
-        await provider.cleanup();
-      } catch (err) {
-        logger.error(`Error during cleanup for ${provider.config.name}: ${err}`);
+    // Phase 3 & 4: Cleanup (skipped for partial runs)
+    if (!isPartial) {
+      progress.step("Remote cleanup: removing old backups from providers");
+      for (const provider of providers) {
+        try {
+          await provider.cleanup();
+        } catch (err) {
+          logger.error(
+            `Error during cleanup for ${provider.config.name}: ${err}`,
+          );
+        }
       }
-    }
 
-    // Phase 4: Local temp cleanup
-    progress.step("Local cleanup: removing temp files");
-    try {
-      await cleanTempData();
-    } catch (err) {
-      logger.error(`Error during local cleanup: ${err}`);
+      progress.step("Local cleanup: removing temp files");
+      try {
+        await cleanTempData();
+      } catch (err) {
+        logger.error(`Error during local cleanup: ${err}`);
+      }
     }
 
     progress.summary(Date.now() - startTime);
@@ -97,12 +134,17 @@ async function backupJob(): Promise<void> {
   }
 }
 
-schedule(config.settings.scheduleExpression, async () => {
-  await backupJob();
-});
+// --only: run immediately and exit, no cron
+if (onlyFilter) {
+  backupJob(onlyFilter);
+} else {
+  schedule(config.settings.scheduleExpression, async () => {
+    await backupJob(null);
+  });
 
-if (config.settings.backupOnInit) {
-  backupJob();
+  if (config.settings.backupOnInit) {
+    backupJob(null);
+  }
 }
 
 process.on("uncaughtException", (err) => {
