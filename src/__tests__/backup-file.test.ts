@@ -2,16 +2,28 @@ import { describe, expect, it } from "bun:test";
 import { isBackupFile } from "../utils/backup-file";
 
 describe("isBackupFile", () => {
-  it("returns true for .gz files", () => {
-    expect(isBackupFile("backup-2024-01-01.gz")).toBe(true);
+  it("returns true for bkt- prefixed .gz files", () => {
+    expect(isBackupFile("bkt-db-dobrunia-1234.gz")).toBe(true);
   });
 
-  it("returns true for .tar.gz files", () => {
-    expect(isBackupFile("files-wordpress-2024-01-01.tar.gz")).toBe(true);
+  it("returns true for bkt- prefixed .tar.gz files", () => {
+    expect(isBackupFile("bkt-files-wordpress-1234.tar.gz")).toBe(true);
   });
 
-  it("returns true for .zip files", () => {
-    expect(isBackupFile("archive.zip")).toBe(true);
+  it("returns true for bkt- prefixed .zip files", () => {
+    expect(isBackupFile("bkt-archive.zip")).toBe(true);
+  });
+
+  it("returns false for .gz files without bkt- prefix", () => {
+    expect(isBackupFile("backup-2024-01-01.gz")).toBe(false);
+  });
+
+  it("returns false for .tar.gz files without bkt- prefix", () => {
+    expect(isBackupFile("files-wordpress-2024-01-01.tar.gz")).toBe(false);
+  });
+
+  it("returns false for .zip files without bkt- prefix", () => {
+    expect(isBackupFile("archive.zip")).toBe(false);
   });
 
   it("returns false for .sql files", () => {
@@ -34,12 +46,11 @@ describe("isBackupFile", () => {
     expect(isBackupFile("")).toBe(false);
   });
 
-  it("handles .tar files (not .tar.gz) as false", () => {
-    expect(isBackupFile("archive.tar")).toBe(false);
+  it("returns false for .tar files even with bkt- prefix", () => {
+    expect(isBackupFile("bkt-archive.tar")).toBe(false);
   });
 
-  // .tar.gz also ends with .gz so it matches both checks — that's fine
-  it(".tar.gz matches the .gz check as well", () => {
-    expect(isBackupFile("test.tar.gz")).toBe(true);
+  it("bkt- prefixed .tar.gz matches the .gz check as well", () => {
+    expect(isBackupFile("bkt-test.tar.gz")).toBe(true);
   });
 });

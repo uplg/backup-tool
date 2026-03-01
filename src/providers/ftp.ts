@@ -1,4 +1,4 @@
-import { basename, join } from "node:path";
+import { basename, posix } from "node:path";
 import { Client } from "basic-ftp";
 import config, { type FTPProviderConfig } from "../config";
 import { isBackupFile } from "../utils/backup-file";
@@ -6,11 +6,14 @@ import { ageInDays } from "../utils/date";
 import logger from "../utils/logger";
 import type { Provider } from ".";
 
+/** Timeout for FTP connections (30s) */
+const CONNECT_TIMEOUT = 30_000;
+
 export default class FTPProvider implements Provider {
   constructor(public config: FTPProviderConfig) {}
 
   private async connect(): Promise<Client> {
-    const client = new Client();
+    const client = new Client(CONNECT_TIMEOUT);
     const { host, port, user, password, secure } = this.config.connection;
     await client.access({
       host,
@@ -25,7 +28,7 @@ export default class FTPProvider implements Provider {
   async send(file: string): Promise<void> {
     const client = await this.connect();
     try {
-      const remotePath = join(this.config.destination, basename(file));
+      const remotePath = posix.join(this.config.destination, basename(file));
       await client.uploadFrom(file, remotePath);
       logger.info(`File ${file} sent to ${this.config.name}`);
     } finally {
@@ -43,7 +46,7 @@ export default class FTPProvider implements Provider {
 
         const age = ageInDays(file.modifiedAt);
         if (age > config.settings.maxFileAge) {
-          const remotePath = join(this.config.destination, file.name);
+          const remotePath = posix.join(this.config.destination, file.name);
           logger.info(`Deleting file ${file.name} in ${this.config.name}`);
           await client.remove(remotePath);
         }

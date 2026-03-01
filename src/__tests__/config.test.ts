@@ -5,6 +5,9 @@ import { describe, expect, it } from "bun:test";
  * Since loadConfig() reads from disk at module load time and uses __dirname,
  * we test the validation rules in isolation by replicating the checks.
  */
+
+const VALID_PROVIDER_TYPES = new Set(["sftp", "ftp", "ftpes"]);
+
 describe("config validation logic", () => {
   it("rejects config without scheduleExpression", () => {
     const raw = { settings: {} };
@@ -105,5 +108,66 @@ describe("config validation logic", () => {
     expect(settings.backupOnInit).toBe(true);
     expect(settings.maxFileAge).toBe(14);
     expect(settings.allowSelfSigned).toBe(true);
+  });
+});
+
+describe("provider validation logic", () => {
+  it("rejects provider without name", () => {
+    const p: Record<string, unknown> = {
+      type: "sftp",
+      destination: "/backups",
+      connection: {},
+    };
+    expect(!p.name).toBe(true);
+  });
+
+  it("rejects provider with invalid type", () => {
+    const p = {
+      name: "test",
+      type: "s3",
+      destination: "/backups",
+      connection: {},
+    };
+    expect(!VALID_PROVIDER_TYPES.has(p.type)).toBe(true);
+  });
+
+  it("accepts provider with valid sftp type", () => {
+    const p = {
+      name: "test",
+      type: "sftp",
+      destination: "/backups",
+      connection: {},
+    };
+    expect(VALID_PROVIDER_TYPES.has(p.type)).toBe(true);
+  });
+
+  it("accepts provider with valid ftp type", () => {
+    const p = {
+      name: "test",
+      type: "ftp",
+      destination: "/backups",
+      connection: {},
+    };
+    expect(VALID_PROVIDER_TYPES.has(p.type)).toBe(true);
+  });
+
+  it("accepts provider with valid ftpes type", () => {
+    const p = {
+      name: "test",
+      type: "ftpes",
+      destination: "/backups",
+      connection: {},
+    };
+    expect(VALID_PROVIDER_TYPES.has(p.type)).toBe(true);
+  });
+
+  it("rejects provider without destination", () => {
+    const p = { name: "test", type: "sftp", connection: {} };
+    expect(!(p as Record<string, unknown>).destination).toBe(true);
+  });
+
+  it("rejects provider without connection", () => {
+    const p = { name: "test", type: "sftp", destination: "/backups" };
+    expect(!(p as Record<string, unknown>).connection).toBe(true);
   });
 });

@@ -38,6 +38,8 @@ export interface FTPProviderConfig {
   };
 }
 
+const VALID_PROVIDER_TYPES = new Set(["sftp", "ftp", "ftpes"]);
+
 function loadConfig(): BackupConfig {
   const configPath = join(__dirname, "..", "config.json");
   const raw = JSON.parse(readFileSync(configPath, "utf-8"));
@@ -79,6 +81,25 @@ function loadConfig(): BackupConfig {
     return f as unknown as FileBackupConfig;
   });
 
+  // Validate providers
+  const providers: ProviderConfig[] = raw.providers.map((p: Record<string, unknown>, i: number) => {
+    if (!p.name) {
+      throw new Error(`Config: provider at index ${i} is missing a "name" field`);
+    }
+    if (!p.type || !VALID_PROVIDER_TYPES.has(p.type as string)) {
+      throw new Error(
+        `Config: provider "${p.name}" has invalid type "${p.type}" (expected sftp | ftp | ftpes)`,
+      );
+    }
+    if (!p.destination) {
+      throw new Error(`Config: provider "${p.name}" is missing a "destination" field`);
+    }
+    if (!p.connection || typeof p.connection !== "object") {
+      throw new Error(`Config: provider "${p.name}" is missing a "connection" object`);
+    }
+    return p as unknown as ProviderConfig;
+  });
+
   return {
     settings: {
       backupOnInit: raw.settings.backupOnInit ?? false,
@@ -88,7 +109,7 @@ function loadConfig(): BackupConfig {
     },
     dbs,
     files,
-    providers: raw.providers,
+    providers,
   };
 }
 

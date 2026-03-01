@@ -1,11 +1,14 @@
 import { createReadStream } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, posix } from "node:path";
 import { Client } from "ssh2";
 import config, { type SFTPProviderConfig } from "../config";
 import { isBackupFile } from "../utils/backup-file";
 import { ageInDays } from "../utils/date";
 import logger from "../utils/logger";
 import type { Provider } from ".";
+
+/** Timeout for SFTP connections (30s) */
+const CONNECT_TIMEOUT = 30_000;
 
 export default class SFTPProvider implements Provider {
   constructor(public config: SFTPProviderConfig) {}
@@ -15,13 +18,19 @@ export default class SFTPProvider implements Provider {
     await new Promise<void>((resolve, reject) => {
       client.on("ready", () => {
         client.sftp((err, sftp) => {
-          if (err) reject(err);
-          const localFilePath = createReadStream(file);
-          const remoteFilePath = join(this.config.destination, basename(file));
-          const remoteFileStream = sftp.createWriteStream(remoteFilePath);
-          localFilePath
-            .pipe(remoteFileStream)
-            .on("error", reject)
+          if (err) {
+            client.end();
+            return reject(err);
+          }
+          const localStream = createReadStream(file);
+          const remotePath = posix.join(this.config.destination, basename(file));
+          const remoteStream = sftp.createWriteStream(remotePath);
+          localStream
+            .pipe(remoteStream)
+            .on("error", (err: Error) => {
+              client.end();
+              reject(err);
+            })
             .on("close", () => {
               logger.info(`File ${file} sent to ${this.config.name}`);
               client.end();
@@ -29,7 +38,11 @@ export default class SFTPProvider implements Provider {
             });
         });
       });
-      client.connect(this.config.connection);
+      client.on("error", reject);
+      client.connect({
+        ...this.config.connection,
+        readyTimeout: CONNECT_TIMEOUT,
+      });
     });
   }
 
@@ -38,9 +51,15 @@ export default class SFTPProvider implements Provider {
     await new Promise<void>((resolve, reject) => {
       client.on("ready", () => {
         client.sftp((err, sftp) => {
-          if (err) reject(err);
+          if (err) {
+            client.end();
+            return reject(err);
+          }
           sftp.readdir(this.config.destination, (err, files) => {
-            if (err) reject(err);
+            if (err) {
+              client.end();
+              return reject(err);
+            }
 
             const deletePromises = files
               .filter((file) => isBackupFile(file.filename))
@@ -50,10 +69,10 @@ export default class SFTPProvider implements Provider {
               }))
               .filter((file) => file.age > config.settings.maxFileAge)
               .map((file) => {
-                const filePath = join(this.config.destination, file.filename);
+                const filePath = posix.join(this.config.destination, file.filename);
                 return new Promise<void>((resolve, reject) => {
                   sftp.unlink(filePath, (err) => {
-                    if (err) reject(err);
+                    if (err) return reject(err);
                     logger.info(`Deleting file ${file.filename} in ${this.config.name}`);
                     resolve();
                   });
@@ -65,11 +84,18 @@ export default class SFTPProvider implements Provider {
                 client.end();
                 resolve();
               })
-              .catch(reject);
+              .catch((err) => {
+                client.end();
+                reject(err);
+              });
           });
         });
       });
-      client.connect(this.config.connection);
+      client.on("error", reject);
+      client.connect({
+        ...this.config.connection,
+        readyTimeout: CONNECT_TIMEOUT,
+      });
     });
   }
 }

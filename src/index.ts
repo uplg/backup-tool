@@ -23,9 +23,7 @@ const { values: args } = parseArgs({
 });
 
 const onlyFilter: Set<string> | null =
-  typeof args.only === "string"
-    ? new Set(args.only.split(",").map((s) => s.trim()))
-    : null;
+  typeof args.only === "string" ? new Set(args.only.split(",").map((s) => s.trim())) : null;
 
 const providers = config.providers.map((description) => {
   if (isFTP(description)) {
@@ -33,9 +31,7 @@ const providers = config.providers.map((description) => {
   } else if (isSFTP(description)) {
     return new SFTPProvider(description);
   } else {
-    throw new Error(
-      `Unknown provider type: ${(description as { type: string }).type}`,
-    );
+    throw new Error(`Unknown provider type: ${(description as { type: string }).type}`);
   }
 });
 
@@ -54,19 +50,12 @@ async function backupJob(filter: Set<string> | null): Promise<void> {
   const startTime = Date.now();
   const isPartial = filter !== null;
 
-  const dbs = filter
-    ? config.dbs.filter((db) => filter.has(db.name))
-    : config.dbs;
-  const files = filter
-    ? config.files.filter((f) => filter.has(f.name))
-    : config.files;
+  const dbs = filter ? config.dbs.filter((db) => filter.has(db.name)) : config.dbs;
+  const files = filter ? config.files.filter((f) => filter.has(f.name)) : config.files;
 
   if (isPartial && dbs.length === 0 && files.length === 0) {
     logger.error(`No backup targets matched --only "${[...filter].join(",")}"`);
-    const allNames = [
-      ...config.dbs.map((d) => d.name),
-      ...config.files.map((f) => f.name),
-    ];
+    const allNames = [...config.dbs.map((d) => d.name), ...config.files.map((f) => f.name)];
     logger.info(`Available targets: ${allNames.join(", ")}`);
     return;
   }
@@ -114,9 +103,7 @@ async function backupJob(filter: Set<string> | null): Promise<void> {
         try {
           await provider.cleanup();
         } catch (err) {
-          logger.error(
-            `Error during cleanup for ${provider.config.name}: ${err}`,
-          );
+          logger.error(`Error during cleanup for ${provider.config.name}: ${err}`);
         }
       }
 
@@ -136,7 +123,7 @@ async function backupJob(filter: Set<string> | null): Promise<void> {
 
 // --only: run immediately and exit, no cron
 if (onlyFilter) {
-  backupJob(onlyFilter);
+  backupJob(onlyFilter).then(() => process.exit(0));
 } else {
   schedule(config.settings.scheduleExpression, async () => {
     await backupJob(null);
