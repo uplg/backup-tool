@@ -1,43 +1,20 @@
-import type { IOptions } from "ftp-ts";
-import type { ConnectConfig } from "ssh2";
-import SFTPProvider from "./sftp";
+import type { ProviderConfig } from "../config";
 import FTPProvider from "./ftp";
+import SFTPProvider from "./sftp";
 
-export enum Protocols {
-  sftp = "sftp",
-  ftpes = "ftpes",
-  ftp = "ftp",
-}
-
-interface ConnectionConfigForProvider {
-  sftp: ConnectConfig;
-  ftp: IOptions;
-  ftpes: IOptions;
-}
-
-export interface ConfigType<Protocol extends Protocols> {
-  name: string;
-  type: Protocol;
-  destination: string;
-  connection: ConnectionConfigForProvider[Protocol];
-}
-
-export interface Provider<Protocol extends Protocols> {
-  config: ConfigType<Protocol>;
-
+export interface Provider {
+  config: ProviderConfig;
   send(file: string): Promise<void>;
   cleanup(): Promise<void>;
 }
 
-export function isSFTP(config: {
-  type: string;
-}): config is ConfigType<Protocols.sftp> {
+export function isSFTP(config: ProviderConfig): config is ProviderConfig & { type: "sftp" } {
   return config.type === "sftp";
 }
 
-export function isFTP(config: {
-  type: string;
-}): config is ConfigType<Protocols.ftp | Protocols.ftpes> {
+export function isFTP(
+  config: ProviderConfig,
+): config is ProviderConfig & { type: "ftp" | "ftpes" } {
   return config.type === "ftp" || config.type === "ftpes";
 }
 

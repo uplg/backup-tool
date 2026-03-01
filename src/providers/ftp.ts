@@ -1,58 +1,55 @@
-import FTPClient from "ftp-ts";
-import { basename, join } from "path";
-
-import logger from "../utils/logger";
+import { basename, join } from "node:path";
+import { Client } from "basic-ftp";
+import config, { type FTPProviderConfig } from "../config";
+import { isBackupFile } from "../utils/backup-file";
 import { ageInDays } from "../utils/date";
+import logger from "../utils/logger";
+import type { Provider } from ".";
 
-import type { ConfigType, Provider, Protocols } from ".";
-import Config from "../config";
+export default class FTPProvider implements Provider {
+  constructor(public config: FTPProviderConfig) {}
 
-export default class FTPProvider
-  implements Provider<Protocols.ftp | Protocols.ftpes>
-{
-  constructor(public config: ConfigType<Protocols.ftp | Protocols.ftpes>) {}
+  private async connect(): Promise<Client> {
+    const client = new Client();
+    const { host, port, user, password, secure } = this.config.connection;
+    await client.access({
+      host,
+      port: port ?? 21,
+      user: user ?? "anonymous",
+      password: password ?? "",
+      secure: secure ?? this.config.type === "ftpes",
+    });
+    return client;
+  }
 
   async send(file: string): Promise<void> {
-    const ftpClient = await FTPClient.connect(this.config.connection);
-
-    ftpClient.on("close", (isError: boolean) => {
-      if (!isError) {
-        logger.info(`File ${file} sent to ${this.config.name}`);
-        return;
-      }
-
-      logger.error(`connection closed, with error: ${isError}`);
-    });
-
-    await ftpClient.put(file, join(this.config.destination, basename(file)));
-    ftpClient.end();
+    const client = await this.connect();
+    try {
+      const remotePath = join(this.config.destination, basename(file));
+      await client.uploadFrom(file, remotePath);
+      logger.info(`File ${file} sent to ${this.config.name}`);
+    } finally {
+      client.close();
+    }
   }
 
   async cleanup(): Promise<void> {
-    const ftpClient = await FTPClient.connect(this.config.connection);
-    const fileListing = await ftpClient.list(this.config.destination);
-    const toDelete: Promise<void>[] = [];
+    const client = await this.connect();
+    try {
+      const fileListing = await client.list(this.config.destination);
 
-    for (const file of fileListing) {
-      if (typeof file === "string") {
-        continue;
-      }
-      if (
-        (file.name.endsWith(".gz") || file.name.endsWith(".zip")) &&
-        file.date
-      ) {
-        const age = ageInDays(file.date);
-        if (age > Config.settings.maxFileAge) {
+      for (const file of fileListing) {
+        if (!isBackupFile(file.name) || !file.modifiedAt) continue;
+
+        const age = ageInDays(file.modifiedAt);
+        if (age > config.settings.maxFileAge) {
+          const remotePath = join(this.config.destination, file.name);
           logger.info(`Deleting file ${file.name} in ${this.config.name}`);
-          toDelete.push(
-            ftpClient.delete(join(this.config.destination, file.name)),
-          );
+          await client.remove(remotePath);
         }
       }
+    } finally {
+      client.close();
     }
-
-    await Promise.all(toDelete);
-
-    ftpClient.end();
   }
 }

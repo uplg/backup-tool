@@ -11,5 +11,5 @@
     "noImplicitAny": true,
     "outDir": "./dist"
   },
-  "include": ["./config.json", "./src"]
+  "include": ["./src"]
 }

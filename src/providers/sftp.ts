@@ -1,15 +1,14 @@
+import { createReadStream } from "node:fs";
+import { basename, join } from "node:path";
 import { Client } from "ssh2";
-import { createReadStream } from "fs";
-import { basename, join } from "path";
-
-import logger from "../utils/logger";
+import config, { type SFTPProviderConfig } from "../config";
+import { isBackupFile } from "../utils/backup-file";
 import { ageInDays } from "../utils/date";
+import logger from "../utils/logger";
+import type { Provider } from ".";
 
-import type { ConfigType, Provider, Protocols } from ".";
-import Config from "../config";
-
-export default class SFTPProvider implements Provider<Protocols.sftp> {
-  constructor(public config: ConfigType<Protocols.sftp>) {}
+export default class SFTPProvider implements Provider {
+  constructor(public config: SFTPProviderConfig) {}
 
   async send(file: string): Promise<void> {
     const client = new Client();
@@ -44,24 +43,18 @@ export default class SFTPProvider implements Provider<Protocols.sftp> {
             if (err) reject(err);
 
             const deletePromises = files
-              .filter(
-                (file) =>
-                  file.filename.endsWith(".gz") ||
-                  file.filename.endsWith(".zip"),
-              )
+              .filter((file) => isBackupFile(file.filename))
               .map((file) => ({
                 ...file,
                 age: ageInDays(new Date(file.attrs.mtime * 1000)),
               }))
-              .filter((file) => file.age > Config.settings.maxFileAge)
+              .filter((file) => file.age > config.settings.maxFileAge)
               .map((file) => {
                 const filePath = join(this.config.destination, file.filename);
                 return new Promise<void>((resolve, reject) => {
                   sftp.unlink(filePath, (err) => {
                     if (err) reject(err);
-                    logger.info(
-                      `Deleting file ${file.filename} in ${this.config.name}`,
-                    );
+                    logger.info(`Deleting file ${file.filename} in ${this.config.name}`);
                     resolve();
                   });
                 });

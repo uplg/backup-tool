@@ -1,30 +1,35 @@
-import { readdir, stat, unlink } from "fs/promises";
-import { tmpdir } from "os";
+import { readdir, stat, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import logger from "./logger";
 
+/** Prefix used for all temp files created by backup-tool */
+const TEMP_PREFIX = "bkt-";
+
 /**
- * Cleanup script data. (.sql, .gz and .zip file in tmpdir)
+ * Cleanup temp files created by backup-tool.
+ * Only deletes files that start with our prefix to avoid
+ * nuking other applications' temp files.
  */
-export async function cleanTempData(): Promise<void> {
-  const dir = tmpdir();
+export async function cleanTempData(dir?: string): Promise<void> {
+  const targetDir = dir ?? tmpdir();
 
   try {
-    const files = await readdir(dir);
+    const files = await readdir(targetDir);
     for (const file of files) {
-      const filePath = `${dir}/${file}`;
-      const fileExtension = file.split(".").pop();
-      const stats = await stat(filePath);
-      if (
-        stats.isFile() &&
-        (fileExtension === "sql" ||
-          fileExtension === "gz" ||
-          fileExtension === "zip")
-      ) {
-        await unlink(filePath);
-        logger.info(`File ${filePath} removed.`);
+      if (!file.startsWith(TEMP_PREFIX)) continue;
+
+      const filePath = `${targetDir}/${file}`;
+      try {
+        const stats = await stat(filePath);
+        if (stats.isFile()) {
+          await unlink(filePath);
+          logger.info(`Temp file removed: ${file}`);
+        }
+      } catch (err) {
+        logger.warn(`Could not remove temp file ${file}: ${err}`);
       }
     }
   } catch (err) {
-    logger.error(`Error while removing files in ${dir}. ${err}`);
+    logger.error(`Error while cleaning temp files in ${targetDir}: ${err}`);
   }
 }

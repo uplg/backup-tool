@@ -1,23 +1,16 @@
+import { unlink } from "node:fs/promises";
 import { schedule } from "node-cron";
 
 import config from "./config";
-
+import { FTPProvider, isFTP, isSFTP, SFTPProvider } from "./providers";
 import { backupDatabase, compressBackup } from "./utils/database";
+import { archiveFiles } from "./utils/files";
 import { cleanTempData } from "./utils/local";
-
 import logger from "./utils/logger";
+import { Progress } from "./utils/progress";
 
-import {
-  Protocols,
-  isFTP,
-  isSFTP,
-  FTPProvider,
-  SFTPProvider,
-} from "./providers";
-import { zipFiles } from "./utils/files";
-
-if (config.settings?.allowSelfSigned ?? false) {
-  process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0";
+if (config.settings.allowSelfSigned) {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 }
 
 const providers = config.providers.map((description) => {
@@ -26,88 +19,89 @@ const providers = config.providers.map((description) => {
   } else if (isSFTP(description)) {
     return new SFTPProvider(description);
   } else {
-    throw new Error(
-      `Unknown provider type : ${
-        description.type
-      }, expected one of : ${Object.keys(Protocols).join(",")}`,
-    );
+    throw new Error(`Unknown provider type: ${(description as { type: string }).type}`);
   }
 });
 
+async function sendToProviders(filePath: string, label: string): Promise<void> {
+  const jobs = providers.map(async (provider) => {
+    try {
+      await provider.send(filePath);
+    } catch (err) {
+      logger.error(`Error sending ${label} to ${provider.config.name}: ${err}`);
+    }
+  });
+  await Promise.all(jobs);
+}
+
 async function backupJob(): Promise<void> {
+  const startTime = Date.now();
+
+  // Each DB = dump + compress + send (1 step)
+  // Each file entry = archive + send (1 step)
+  // + remote cleanup (1 step)
+  // + local cleanup (1 step)
+  const totalSteps =
+    config.dbs.length + config.files.length + 1 /* remote cleanup */ + 1; /* local cleanup */
+  const progress = new Progress(totalSteps);
+
+  logger.info("=== Backup job started ===");
+
   try {
+    // Phase 1: Database backups
     for (const db of config.dbs) {
-      const backupFilePath = await backupDatabase(db);
-      const compressedFilePath = await compressBackup(db, backupFilePath);
-
-      const jobs: Promise<void>[] = [];
-      for (const provider of providers) {
-        const job = async () => {
-          try {
-            await provider.send(compressedFilePath);
-          } catch (err) {
-            logger.error(
-              `Error during db job for ${provider.config.name}, ${err}`,
-            );
-          }
-        };
-
-        jobs.push(job());
+      progress.step(`Database dump: ${db.name} (${db.type})`);
+      try {
+        const backupFilePath = await backupDatabase(db);
+        const compressedFilePath = await compressBackup(db, backupFilePath);
+        await sendToProviders(compressedFilePath, `db:${db.name}`);
+        await unlink(compressedFilePath).catch(() => {});
+      } catch (err) {
+        progress.fail(`database ${db.name}: ${err}`);
       }
-
-      await Promise.all(jobs);
     }
 
-    for (const files of config.files) {
-      const jobs: Promise<void>[] = [];
-      const zipFilePath = await zipFiles(files.name, files.source);
-      for (const provider of providers) {
-        const job = async () => {
-          try {
-            await provider.send(zipFilePath);
-          } catch (err) {
-            logger.error(
-              `Error during files job for ${provider.config.name}, ${err}`,
-            );
-          }
-        };
-
-        jobs.push(job());
+    // Phase 2: File backups
+    for (const fileConfig of config.files) {
+      progress.step(`Archive files: ${fileConfig.name}`);
+      try {
+        const archivePath = await archiveFiles(fileConfig);
+        await sendToProviders(archivePath, `files:${fileConfig.name}`);
+        await unlink(archivePath).catch(() => {});
+      } catch (err) {
+        progress.fail(`files ${fileConfig.name}: ${err}`);
       }
-
-      await Promise.all(jobs);
     }
 
-    // Once everything is sent, cleanup providers
+    // Phase 3: Remote cleanup
+    progress.step("Remote cleanup: removing old backups from providers");
     for (const provider of providers) {
       try {
         await provider.cleanup();
       } catch (err) {
-        logger.error(
-          `Error during cleanup for ${provider.config.name}, ${err}`,
-        );
+        logger.error(`Error during cleanup for ${provider.config.name}: ${err}`);
       }
     }
 
+    // Phase 4: Local temp cleanup
+    progress.step("Local cleanup: removing temp files");
     try {
       await cleanTempData();
     } catch (err) {
-      logger.error(`Error during local cleanup, ${err}`);
+      logger.error(`Error during local cleanup: ${err}`);
     }
-  } catch (err) {
-    logger.error(`Error during backup ${err}`);
-  }
-}
 
-if (!config.settings?.scheduleExpression) {
-  throw new Error("Invalid config, no schedule expression defined");
+    progress.summary(Date.now() - startTime);
+  } catch (err) {
+    logger.error(`Fatal error during backup: ${err}`);
+  }
 }
 
 schedule(config.settings.scheduleExpression, async () => {
   await backupJob();
 });
 
-if (config.settings?.backupOnInit) {
+if (config.settings.backupOnInit) {
   backupJob();
 }
 
@@ -116,5 +110,5 @@ process.on("uncaughtException", (err) => {
 });
 
 process.on("unhandledRejection", (err) => {
-  logger.error(`unhandledRejection : ${err}`);
+  logger.error(`unhandledRejection: ${err}`);
 });

@@ -15,7 +15,7 @@ At the root, create a `config.json` file with :
     // every day at 02:00. @see: https://crontab.guru/
     "scheduleExpression": "0 2 * * *",
     "maxFileAge": 2,
-    "allowSelfSigned": false
+    "allowSelfSigned": false,
   },
   // uses mysqldump with exec, make sure to have it
   "dbs": [
@@ -23,14 +23,14 @@ At the root, create a `config.json` file with :
       "host": "localhost",
       "user": "xxx",
       "password": "xxx",
-      "name": "xxx"
-    }
+      "name": "xxx",
+    },
   ],
   "files": [
     {
       "name": "example-project",
-      "source": "/local-path"
-    }
+      "source": "/local-path",
+    },
   ],
   "providers": [
     {
@@ -42,8 +42,8 @@ At the root, create a `config.json` file with :
         "host": "remote-sftp-host",
         "port": 22,
         "username": "xxx",
-        "password": "xxx"
-      }
+        "password": "xxx",
+      },
     },
     {
       "name": "siteB",
@@ -60,10 +60,10 @@ At the root, create a `config.json` file with :
         "pasvTimeout": 10000,
         "dataTimeout": 10000,
         "aliveTimeout": 10000,
-        "secureOptions": {}
-      }
-    }
-  ]
+        "secureOptions": {},
+      },
+    },
+  ],
 }
 ```
 
